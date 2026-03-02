@@ -31,6 +31,8 @@ parser.add_argument("--max_loops", type=int, default=1, help="ONLY DEFAULT OF 1 
 parser.add_argument("--min_disparity", type=float, default=50, help="Minimum disparity to generate a new keyframe")
 parser.add_argument("--conf_threshold", type=float, default=25.0, help="Initial percentage of low-confidence points to filter out")
 parser.add_argument("--lc_thres", type=float, default=0.95, help="Threshold for image retrieval. Range: [0, 1.0]. Higher = more loop closures")
+parser.add_argument("--downsample_factor", type=int, default=1, help="Keep every Nth image (1 = no downsampling)")
+parser.add_argument("--no_keyframe_selection", action="store_true", help="Disable optical flow keyframe selection, use all frames")
 
 
 def main():
@@ -42,7 +44,7 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     log_path = os.path.join(args.save_dir, args.log_path)
 
-    use_optical_flow_downsample = True
+    use_optical_flow_downsample = not args.no_keyframe_selection
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
@@ -87,8 +89,7 @@ def main():
                and "depth" not in os.path.basename(f).lower()]
 
     image_names = utils.sort_images_by_number(image_names)
-    downsample_factor = 1
-    image_names = utils.downsample_images(image_names, downsample_factor)
+    image_names = utils.downsample_images(image_names, args.downsample_factor)
     print(f"Found {len(image_names)} images")
 
     image_names_subset = []

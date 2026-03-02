@@ -20,8 +20,6 @@ import os
 import sys
 import time
 import shutil
-import glob
-import tempfile
 import argparse
 import subprocess
 from datetime import datetime
@@ -41,23 +39,6 @@ VBR_SEQUENCES = [
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def create_downsampled_folder(image_folder, downsample, tmpdir):
-    """Create a temp folder with symlinks to every Nth image."""
-    images = sorted(glob.glob(os.path.join(image_folder, "*.png")))
-    if not images:
-        images = sorted(glob.glob(os.path.join(image_folder, "*.jpg")))
-    selected = images[::downsample]
-    ds_folder = os.path.join(tmpdir, "downsampled_images")
-    os.makedirs(ds_folder, exist_ok=True)
-    for i, img_path in enumerate(selected):
-        # Use sequential naming so VGGT-SLAM sees frame_id 0,1,2,...
-        ext = os.path.splitext(img_path)[1]
-        link_name = f"{i:010d}{ext}"
-        os.symlink(os.path.abspath(img_path), os.path.join(ds_folder, link_name))
-    print(f"Downsampled {len(images)} -> {len(selected)} images (factor {downsample})")
-    return ds_folder
-
-
 def run_vggt_slam(image_folder, save_dir, slam_args):
     """Run VGGT-SLAM on a single sequence."""
     cmd = [
@@ -72,6 +53,7 @@ def run_vggt_slam(image_folder, save_dir, slam_args):
         "--conf_threshold", str(slam_args.conf_threshold),
         "--lc_thres", str(slam_args.lc_thres),
         "--max_loops", str(slam_args.max_loops),
+        "--downsample_factor", str(slam_args.downsample),
     ]
     print(f"\n{'='*60}")
     print(f"Running: {' '.join(cmd)}")
@@ -180,16 +162,7 @@ def main():
         # Step 1: Run VGGT-SLAM (unless convert_only)
         if not args.convert_only:
             os.makedirs(raw_seq_dir, exist_ok=True)
-            # Downsample images if requested
-            run_image_folder = image_folder
-            tmpdir = None
-            if args.downsample > 1:
-                tmpdir = tempfile.mkdtemp(prefix=f"vbr_ds_{seq_name}_")
-                run_image_folder = create_downsampled_folder(image_folder, args.downsample, tmpdir)
-            success = run_vggt_slam(run_image_folder, raw_seq_dir, args)
-            # Clean up temp dir
-            if tmpdir and os.path.isdir(tmpdir):
-                shutil.rmtree(tmpdir)
+            success = run_vggt_slam(image_folder, raw_seq_dir, args)
             if not success:
                 results_summary.append((seq_name, "SLAM_FAIL", time.time() - seq_start))
                 continue

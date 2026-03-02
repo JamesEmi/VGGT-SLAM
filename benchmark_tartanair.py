@@ -49,6 +49,8 @@ def run_vggt_slam(image_folder, save_dir, slam_args):
         "--lc_thres", str(slam_args.lc_thres),
         "--max_loops", str(slam_args.max_loops),
     ]
+    if slam_args.no_keyframe_selection:
+        cmd.append("--no_keyframe_selection")
     print(f"\n{'='*60}")
     print(f"Running: {' '.join(cmd)}")
     print(f"{'='*60}\n")
@@ -92,6 +94,8 @@ def main():
     parser.add_argument("--conf_threshold", type=float, default=25.0)
     parser.add_argument("--lc_thres", type=float, default=0.95)
     parser.add_argument("--max_loops", type=int, default=1)
+    parser.add_argument("--no_keyframe_selection", action="store_true",
+                        help="Disable optical flow keyframe selection, use all frames")
 
     args = parser.parse_args()
 
