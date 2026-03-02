@@ -20,6 +20,8 @@ import os
 import sys
 import time
 import shutil
+import glob
+import tempfile
 import argparse
 import subprocess
 from datetime import datetime
@@ -37,6 +39,23 @@ VBR_SEQUENCES = [
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def create_downsampled_folder(image_folder, downsample, tmpdir):
+    """Create a temp folder with symlinks to every Nth image."""
+    images = sorted(glob.glob(os.path.join(image_folder, "*.png")))
+    if not images:
+        images = sorted(glob.glob(os.path.join(image_folder, "*.jpg")))
+    selected = images[::downsample]
+    ds_folder = os.path.join(tmpdir, "downsampled_images")
+    os.makedirs(ds_folder, exist_ok=True)
+    for i, img_path in enumerate(selected):
+        # Use sequential naming so VGGT-SLAM sees frame_id 0,1,2,...
+        ext = os.path.splitext(img_path)[1]
+        link_name = f"{i:010d}{ext}"
+        os.symlink(os.path.abspath(img_path), os.path.join(ds_folder, link_name))
+    print(f"Downsampled {len(images)} -> {len(selected)} images (factor {downsample})")
+    return ds_folder
 
 
 def run_vggt_slam(image_folder, save_dir, slam_args):
@@ -65,7 +84,7 @@ def run_vggt_slam(image_folder, save_dir, slam_args):
     return True
 
 
-def convert_poses(poses_txt, vbr_seq_path, output_dir):
+def convert_poses(poses_txt, vbr_seq_path, output_dir, downsample=1):
     """Convert VGGT-SLAM output to MAC-Loop protocol (VBR)."""
     cmd = [
         sys.executable, os.path.join(SCRIPT_DIR, "convert_vbr_to_macloop.py"),
@@ -73,6 +92,8 @@ def convert_poses(poses_txt, vbr_seq_path, output_dir):
         "--vbr_seq", vbr_seq_path,
         "--output_dir", output_dir,
     ]
+    if downsample > 1:
+        cmd += ["--downsample", str(downsample)]
     print(f"Converting: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=SCRIPT_DIR)
     return result.returncode == 0
@@ -86,10 +107,16 @@ def main():
                         help="Specific sequences to run (e.g. campus_train0 pincio_train0). Default: all train")
     parser.add_argument("--results_root", type=str, default="/mnt/data/anyslam/macloop/vggt-slam-results",
                         help="Root directory for MAC-Loop protocol results")
+    parser.add_argument("--raw_output_root", type=str, default="/mnt/data/anyslam/macloop/vggt-slam-results/raw_output",
+                        help="Root directory for raw VGGT-SLAM outputs (poses.txt, point clouds)")
     parser.add_argument("--convert_only", action="store_true",
                         help="Skip SLAM, only convert existing poses.txt files")
     parser.add_argument("--raw_results_dir", type=str, default=None,
                         help="Directory containing raw VGGT-SLAM outputs (for --convert_only)")
+
+    # Downsampling
+    parser.add_argument("--downsample", type=int, default=2,
+                        help="Pick every Nth image (default: 2, i.e. half framerate)")
 
     # SLAM hyperparameters
     parser.add_argument("--submap_size", type=int, default=16)
@@ -119,7 +146,7 @@ def main():
     if args.convert_only and args.raw_results_dir:
         raw_root = args.raw_results_dir
     else:
-        raw_root = os.path.join(args.results_root, "raw_output", timestamp)
+        raw_root = os.path.join(args.raw_output_root, timestamp)
 
     print(f"VBR root:        {args.vbr_root}")
     print(f"Sequences:       {sequences}")
@@ -153,7 +180,16 @@ def main():
         # Step 1: Run VGGT-SLAM (unless convert_only)
         if not args.convert_only:
             os.makedirs(raw_seq_dir, exist_ok=True)
-            success = run_vggt_slam(image_folder, raw_seq_dir, args)
+            # Downsample images if requested
+            run_image_folder = image_folder
+            tmpdir = None
+            if args.downsample > 1:
+                tmpdir = tempfile.mkdtemp(prefix=f"vbr_ds_{seq_name}_")
+                run_image_folder = create_downsampled_folder(image_folder, args.downsample, tmpdir)
+            success = run_vggt_slam(run_image_folder, raw_seq_dir, args)
+            # Clean up temp dir
+            if tmpdir and os.path.isdir(tmpdir):
+                shutil.rmtree(tmpdir)
             if not success:
                 results_summary.append((seq_name, "SLAM_FAIL", time.time() - seq_start))
                 continue
@@ -165,7 +201,7 @@ def main():
             results_summary.append((seq_name, "NO_POSES", time.time() - seq_start))
             continue
 
-        success = convert_poses(poses_txt, seq_path, protocol_seq_dir)
+        success = convert_poses(poses_txt, seq_path, protocol_seq_dir, downsample=args.downsample)
 
         # Copy loop closure records if they exist
         lc_path = os.path.join(raw_seq_dir, "poses_loop_closures.txt")

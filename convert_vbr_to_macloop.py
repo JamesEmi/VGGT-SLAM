@@ -98,7 +98,7 @@ def load_vbr_gt(gt_path):
     return time_ns, poses_7
 
 
-def convert_poses(poses_txt, vbr_seq_path, output_dir, skip_transform=False):
+def convert_poses(poses_txt, vbr_seq_path, output_dir, skip_transform=False, downsample=1):
     """
     Full conversion pipeline:
     1. Load VGGT-SLAM poses (camera frame)
@@ -119,16 +119,21 @@ def convert_poses(poses_txt, vbr_seq_path, output_dir, skip_transform=False):
     frame_ids, est_poses_7 = load_vggt_poses(poses_txt)
     N = len(est_poses_7)
 
-    # Map frame_ids to real timestamps
-    valid_mask = frame_ids < len(cam_timestamps_ns)
+    # Map frame_ids to real timestamps (accounting for downsampling)
+    # frame_id indexes into the downsampled sequence, so original_idx = frame_id * downsample
+    original_ids = frame_ids * downsample
+    valid_mask = original_ids < len(cam_timestamps_ns)
     if not np.all(valid_mask):
         n_invalid = np.sum(~valid_mask)
         print(f"WARNING: {n_invalid} frame_ids exceed camera timestamp count ({len(cam_timestamps_ns)}), discarding")
-        frame_ids = frame_ids[valid_mask]
+        original_ids = original_ids[valid_mask]
         est_poses_7 = est_poses_7[valid_mask]
         N = len(est_poses_7)
 
-    time_ns = cam_timestamps_ns[frame_ids]
+    if downsample > 1:
+        print(f"Downsample factor {downsample}: mapping frame_ids to original indices (e.g. 0->{0*downsample}, 1->{1*downsample}, ...)")
+
+    time_ns = cam_timestamps_ns[original_ids]
 
     # Sort by timestamp (submap overlap/loop closure frames can be out of order)
     sort_idx = np.argsort(time_ns)
@@ -195,6 +200,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory for .npy files")
     parser.add_argument("--skip_transform", action="store_true",
                         help="Skip camera→body coordinate frame transform")
+    parser.add_argument("--downsample", type=int, default=1,
+                        help="Downsample factor used when running SLAM (maps frame_id to original_idx = frame_id * downsample)")
     args = parser.parse_args()
 
-    convert_poses(args.poses_txt, args.vbr_seq, args.output_dir, args.skip_transform)
+    convert_poses(args.poses_txt, args.vbr_seq, args.output_dir, args.skip_transform, args.downsample)
