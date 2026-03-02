@@ -149,6 +149,9 @@ class GraphMap:
                     K, rotation_matrix, t, scale = decompose_camera(pose)
                     # print("Decomposed K:\n", K)
                     count += 1
+                    # Fix left-handed rotation matrices from SL(4) decomposition
+                    if np.linalg.det(rotation_matrix) < 0:
+                        rotation_matrix = -rotation_matrix
                     x, y, z = t
                     if kitti_format:
                         pose_matrix = np.eye(4)
